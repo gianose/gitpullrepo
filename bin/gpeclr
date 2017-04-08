@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# Author: Gregory Rose
+# Created: 20170405
+# Name: gpeclr
+# Relative Working Directory: ${NAMESPACE}/bin/gpeclr
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+source "${DIR}/../lib/const.sh"
+source "${NAMESPACE}lib/excp.sh"
+source "${NAMESPACE}lib/log.sh"
+source "${NAMESPACE}lib/form.sh"
+
+declare CONFIG=${DIR}/../config/gpeclr.cnf # Variable that stores the location of the gpeclr config file.
+
+declare gpeclr_repo			   # Variable to store the url of the desired ecl repo.
+declare gpeclr_branch='master' # Variable to store the branch of the desired repo.  
+declare gpeclr_dest			   # Variable to store the destination directory of the desired ecl repo.
+declare gpeclr_logs			   # Variable to store the destination directory of the corresponding logs for gpeclr.
+declare gpeclr_cnfg			   # Variable to store boolean indicator. 
+
+gpeclr() {
+	[[ (${1} == '-C' || ${1} == '-h') && $# -gt 1 ]] && usage 0
+
+	[[ $# -le 3 && ${2:0:1} == '-' ]] &&  set -- ${1}
+
+	while getopts ":d:l:r:b:Ch" opts; do
+		case $opts in
+			\?) 
+				usage; exit 1
+				;;
+			d)
+				set_dest ${OPTARG}
+				;;
+			l) 
+				set_logs ${OPTARG}
+				;;
+			r) 
+				set_repo ${OPTARG}
+				;;
+			b)
+				gpeclr_branch=${OPTARG}
+				;;
+			C) 
+				gpeclr_cnfg=true
+				;;
+			h) 
+				usage; exit 0
+				;;
+			:) 
+				opt_chk "${OPTARG}"
+				;;
+		esac
+	done
+
+	[ ${gpeclr_cnfg} ] && config
+	
+	# Initalize the logs
+	[ ${gpeclr_logs} ] || set_logs "${gpeclr_dest}" false
+	log_init ${gpeclr_logs}
+	
+
+
+	#[[ ( ${gpeclr_dest} ) && ( -z "${gpeclr_repo}" ) ]] &&  
+}
+
+config() {
+	set_repo
+	local _dest="$(awk -F ": " '/^destination:./ {print $2}' ${CONFIG})"
+	set_dest ${_dest}
+
+}
+
+# Checks to ensure that the provided destination directory exist, if it does the variable gpeclr_dest is set.
+# @private
+# @args:<string> - Destination directory
+set_dest() {
+	[ -d ${1%/*} ] || throw "InvalidArgument" "The provided directory does not exist: ${1}"
+
+	gpeclr_dest=${1}
+}
+
+# Ensures that the desired log directory exist, if so gpeclr_logs will be set to the desired directory.
+# @private
+# @args:<string> - The desired directory of the logs.
+# @args:<boolean> - Indicates whether or not the '-l' option was called.
+set_logs() {
+	local _dir=${1}
+	local _fix=true
+	[ "${2}" ] && _fix=${2}
+
+	if ! ${_fix}; then
+		[[ ${dir:$((${#dir}-1)):1} == '/' ]]  && _dir=${dir:0:$((${#dir-1}))}
+		
+		for i in `seq 1 2`; do
+			_dir=${_dir%/*}
+		done
+
+		ls -1 ${_dir} | grep -P -i -q '^log(s)?$' || mkdir "${_dir}/logs"
+	
+		_dir="${_dir}/logs"
+	fi
+
+	[ -d ${_dir} ] || throw "InvalidArgument" "The parent directory of the log directory does not exist: ${_dir}"
+
+	gpeclr_logs=${_dir}
+}
+
+
+# Ensures that the remote repo provided is reachable. If it is reachable the address will be pushed unto the ARGLST array
+# @private
+# @args:<string> - git URL to be tested
+set_repo() {
+	export GIT_ASKPASS=/bin/echo
+	
+	local _url=''
+	local _branch=''
+
+	if [ ${#@} -eq 0 ]; then
+		[[ ( -s ${CONFIG} ) && ( -r ${CONFIG} ) ]] || { incite "FatalError" "GPECLR's corresponding config file is missing: ${CONFIG}"; throw; }
+		_url="$(awk -F ": " '/^repository:./ {print $2}' ${CONFIG})"
+		_branch="$(awk -F ": " '/^branch:./ {print $2}' ${CONFIG})"
+		[ ${_branch} == ${gpeclr_branch} ] || gpeclr_branch=${_branch}
+	else
+		_url=${1}
+	fi	
+
+	git ls-remote --exit-code "${_url}" "${gpeclr_branch}" --quiet &> /dev/null || throw "InvalidArgument" "The provided URL for the repo or the branch is invalid: ${1} ${gpeclr_branch}"
+
+	gpeclr_repo=${_url}
+}
+
+# Outputs usage information for gpeclr
+# @public
+# @args:<boolean> - boolean value indicating to the function wheather or not to exit the entire script.
+usage() {
+	local _usage=(
+		"title;GPECLR;Git Pull ECL Repo"
+		"head;DESCRIPTION:"
+		"body; GPECLR (Git Pull ECL Repo) Can be utilized in order to clone or pull an ECL repo.;
+		If the repo does not exist on the local machine it will be cloned. If the repo already;
+		exist on the local machine, a pull will be executed in order to keep the repo up to date."
+		"head;SYNOPSIS:"
+		"body;[ -r <REPOSITORY> | -r <REPOSITORY> -l <LOG_DIR> | -r <REPOSITORY> -d <DESTINATION> | -r <REPOSITORY> -d <DESTINATION> -l <LOG_DIR> | -C | -h ]"
+		"head;OPTIONS:"
+		"body;
+		-r <REPOSITORY>: the https address of the repository to be cloned or pulled.;
+		-d <DESTINATION>: the destination directory as it corresponds with the parent directory '/data/hpcc/bocaprod/master';
+		-l <LOG_DIR>: the directory were the logs will be written to.;
+		-C : Will execute gpeclr utilizing the config file '../config/gpeclr.cnf';
+		-h : help"
+		"head;EXAMPLE:"
+		"body;
+		gpeclr -r https://gitlab.ins.risk.regn.net/risk-engineering/Boca.git -d /data/hpcc/bocaprod/master;
+		gpeclr -C"
+		"head;NOTE:"
+		"body; If GPECLR is called without the '-l' option, which indicates the absolute path of the logs;
+		GPECLR will create a logs directory one level above the repo directory, which it will use to;
+		store logs."
+	)
+
+	form _usage[@]
+
+	[[ ${1} ]] && exit 1
+}
+
+
+# Clones the corresponding repo to the provided destination.
+# @param <string> The URL of the repository to be cloned.
+# @param <string> The absolute path of the destination directory.
+clone() {
+	local _err="$(git clone ${1} -b master ${2} 2>&1 > /dev/null --quiet)"
+	[[ ${_err} ]] && throw "FatalError" "Git failed to clone the repo ${1} to ${2} with the following error: ${_err}"
+}
+
+# Updates the corresponding local repo to the current state of the remote repo.
+# @param <string> The absolute path of the local repo.
+# @param <string> The URL of the remote repository.
+pull() {
+	local _dir
+	[[ ${1:$((${#1}-1))} == "/" ]] && _dir=${1}'.git' || _dir=${1}'/.git'
+	local _err="$(git --git-dir=${_dir} --work-tree=${1} fetch --all --quiet && git --git-dir=${_dir} --work-tree=${1} reset --hard origin/master --quiet 2>&1 > /dev/null)"
+	[[ ${_err} ]] && throw "FatalError" "Git failed to update the repo ${1} with the following error: ${_err}"
+}
+
+# Check to ensure that a string follows each of the corresponding argument.
+# Indicates the neccessary input for each argument.
+# @private
+# @args:<string>
+opt_chk() {
+	local _opt
+	
+	case ${1} in
+		d) _opt="<DESTINATION>";;
+		r) _opt="<REPOSITORY>";;
+		l) _opt="<LOG_DIR>";;
+	esac
+
+	incite "InvalidArgument" "Option -${1} requires  ${_opt}"
+	usage
+	throw
+}
+
+#set_repo https://gitlab.ins.risk.regn.net/RoseGr01/gpeclr.git
+#echo ${gpeclr_repo}
+set_repo
+#set_dest '/data/data_build_1/calbus/ecl/master'
+#echo $gpeclr_dest
+#set_logs '/data/data_build_1/calbus/ecl/master' false
+#echo $gpeclr_logs
+#set_logs '/data/data_build_1/calbus/logs'
+#echo $gpeclr_logs
+#set_logs '/home/rosegr01/dev/tmp/master' false
+#echo $gpeclr_logs
+
+#x=$( { gpeclr -r; } 2>&1)
+#echo "${x}"
+#x=$( { gpeclr -d; } 2>&1)
+#echo "${x}"
+#x=$( { gpeclr -l; } 2>&1 )
+#echo "${x}"
