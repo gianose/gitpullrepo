@@ -13,11 +13,11 @@ source "${NAMESPACE}lib/form.sh"
 
 declare CONFIG=${DIR}/../config/gpeclr.cnf # Variable that stores the location of the gpeclr config file.
 
-declare gpeclr_repo			   # Variable to store the url of the desired ecl repo.
+declare gpeclr_repo					   # Variable to store the url of the desired ecl repo.
 declare gpeclr_branch='master' # Variable to store the branch of the desired repo.  
-declare gpeclr_dest			   # Variable to store the destination directory of the desired ecl repo.
-declare gpeclr_logs			   # Variable to store the destination directory of the corresponding logs for gpeclr.
-declare gpeclr_cnfg			   # Variable to store boolean indicator. 
+declare gpeclr_dest					   # Variable to store the destination directory of the desired ecl repo.
+declare gpeclr_logs					   # Variable to store the destination directory of the corresponding logs for gpeclr.
+declare gpeclr_cnfg					   # Variable to store boolean indicator. 
 
 gpeclr() {
 	[[ (${1} == '-C' || ${1} == '-h') && $# -gt 1 ]] && usage 0
@@ -55,19 +55,21 @@ gpeclr() {
 
 	[ ${gpeclr_cnfg} ] && config
 	
-	# Initalize the logs
 	[ ${gpeclr_logs} ] || set_logs "${gpeclr_dest}" false
 	log_init ${gpeclr_logs}
 	
-
-
-	#[[ ( ${gpeclr_dest} ) && ( -z "${gpeclr_repo}" ) ]] &&  
+	[[ ( ${gpeclr_dest} ) && ( -z "${gpeclr_repo}" ) ]] && set_repo
+	[[ ( ${gpeclr_repo} || ${gpeclr_branch} || ${gpeclr_logs} ) && ( -z "${gpeclr_dest}" ) ]] && usage  
 }
 
 config() {
+	# Set the repo and the branch.
 	set_repo
+	# Set the destination.
 	local _dest="$(awk -F ": " '/^destination:./ {print $2}' ${CONFIG})"
 	set_dest ${_dest}
+	# Set the logs.
+	gpeclr_logs="$(awk -F ": " '/^logs:i./ {print $2}' ${CONFIG})"
 }
 
 # Checks to ensure that the provided destination directory exist, if it does the variable gpeclr_dest is set.
@@ -204,7 +206,7 @@ opt_chk() {
 
 #set_repo https://gitlab.ins.risk.regn.net/RoseGr01/gpeclr.git
 #echo ${gpeclr_repo}
-set_repo
+#set_repo
 #set_dest '/data/data_build_1/calbus/ecl/master'
 #echo $gpeclr_dest
 #set_logs '/data/data_build_1/calbus/ecl/master' false
