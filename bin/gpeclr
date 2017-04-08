@@ -68,7 +68,6 @@ config() {
 	set_repo
 	local _dest="$(awk -F ": " '/^destination:./ {print $2}' ${CONFIG})"
 	set_dest ${_dest}
-
 }
 
 # Checks to ensure that the provided destination directory exist, if it does the variable gpeclr_dest is set.
@@ -119,8 +118,10 @@ set_repo() {
 	if [ ${#@} -eq 0 ]; then
 		[[ ( -s ${CONFIG} ) && ( -r ${CONFIG} ) ]] || { incite "FatalError" "GPECLR's corresponding config file is missing: ${CONFIG}"; throw; }
 		_url="$(awk -F ": " '/^repository:./ {print $2}' ${CONFIG})"
-		_branch="$(awk -F ": " '/^branch:./ {print $2}' ${CONFIG})"
-		[ ${_branch} == ${gpeclr_branch} ] || gpeclr_branch=${_branch}
+		if ${gpeclr_config}; then
+			_branch="$(awk -F ": " '/^branch:./ {print $2}' ${CONFIG})"
+			[ ${_branch} == ${gpeclr_branch} ] || gpeclr_branch=${_branch}
+		fi
 	else
 		_url=${1}
 	fi	
