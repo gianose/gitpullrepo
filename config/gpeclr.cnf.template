@@ -1,0 +1,13 @@
+############################################################################
+# GPECLR utilizes this file when called with the '-C' option (config mode).#
+# Please set the below config options as instructed below:                 #
+#                                                                          #
+# destination: The absolute path to the destination directory of the repo. #
+# repository: The url of the repository to be cloned.                      #
+# contact: The email address of this to be contacted if there is a failer. #
+############################################################################
+
+destination:
+repository:
+contact:
+logs

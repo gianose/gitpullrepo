@@ -84,7 +84,8 @@ tst_log_fmt_chk() {
 	
 	if [[ "${_f}" == "log_event" || "${_f}" == "log_error" ]]; then
 		if [[ ${_l} == "ERROR" ]]; then
-			$_f "$(incite "InvalidArgument" "${TST_LOG_RND}" 1)"
+			incite "InvalidArgument" "${TST_LOG_RND}"
+			$_f excp_stack[@]
 			regex=("${tst_log_err[@]}")
 			_e=${log_error}
 		else

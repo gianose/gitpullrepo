@@ -26,6 +26,8 @@ runMultiInput() {
 				;;
 			5) $($_f "${params[2]}" "${params[3]}" "${params[4]}" &> /dev/null)
 				;;
+			6) $($_f "${params[2]}" "${params[3]}" "${params[4]}" "${params[5]}" &> /dev/null)
+				;;
 		esac
 		assertEquals "${params[0]}" ${params[1]} $?
 	done
@@ -39,7 +41,6 @@ runCustom() {
 	declare -a tests=("${!1}")
 	for tsk in "${tests[@]}"; do
 		IFS=${delimiter} read -r -a params <<< ${tsk}
-		#$($2 params[@])
 		$2 params[@]
 		assertEquals "${params[0]}" ${params[1]} ${?}
 	done

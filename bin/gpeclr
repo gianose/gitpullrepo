@@ -12,71 +12,111 @@ source "${NAMESPACE}lib/log.sh"
 source "${NAMESPACE}lib/form.sh"
 
 declare CONFIG=${DIR}/../config/gpeclr.cnf # Variable that stores the location of the gpeclr config file.
+declare GPECL_MAIL_SUB="GPECLR (GIT Pull/Clone ECL Repo) `date +"${FORMAT}"`, failed on `hostname`"
 
-declare gpeclr_repo					   # Variable to store the url of the desired ecl repo.
+declare gpeclr_repo			   # Variable to store the url of the desired ecl repo.
 declare gpeclr_branch='master' # Variable to store the branch of the desired repo.  
-declare gpeclr_dest					   # Variable to store the destination directory of the desired ecl repo.
-declare gpeclr_logs					   # Variable to store the destination directory of the corresponding logs for gpeclr.
-declare gpeclr_cnfg					   # Variable to store boolean indicator. 
+declare gpeclr_dest			   # Variable to store the destination directory of the desired ecl repo.
+declare gpeclr_logs			   # Variable to store the destination directory of the corresponding logs for gpeclr.
+declare gpeclr_cnfg=false	   # Variable to store boolean indicator. 
+declare gprclr_cont			   # Variable to hold the email address of the user to contact in case of failer.
 
 gpeclr() {
 	[[ (${1} == '-C' || ${1} == '-h') && $# -gt 1 ]] && usage 0
 
 	[[ $# -le 3 && ${2:0:1} == '-' ]] &&  set -- ${1}
 
-	while getopts ":d:l:r:b:Ch" opts; do
+	while getopts ":d:l:r:b:ChS" opts; do
 		case $opts in
 			\?) 
 				usage; exit 1
 				;;
-			d)
+			d)  
 				set_dest ${OPTARG}
 				;;
 			l) 
 				set_logs ${OPTARG}
 				;;
-			r) 
+			r)  
 				set_repo ${OPTARG}
 				;;
-			b)
-				gpeclr_branch=${OPTARG}
+			b)	
+				set_branch ${OPTARG}
 				;;
 			C) 
 				gpeclr_cnfg=true
 				;;
 			h) 
 				usage; exit 0
+				;;	
+			S) { usage; return 0; }
 				;;
 			:) 
 				opt_chk "${OPTARG}"
 				;;
 		esac
 	done
+	
+	if ${gpeclr_cnfg}; then 
+		config
+	else
+		if [ ${gpeclr_dest} ]; then
+			[ -z "${gpeclr_branch}" ] && set_branch
+			[ -z "${gpeclr_repo}" ] && set_repo
+			[ -z "${gpeclr_logs}" ]	&& set_logs "${gpeclr_dest}" false
+		else
+			usage 1	
+		fi
+		
+		${log_on} || log_init "${gpeclr_logs}"
+	fi
+	
 
-	[ ${gpeclr_cnfg} ] && config
-	
-	[ ${gpeclr_logs} ] || set_logs "${gpeclr_dest}" false
-	log_init ${gpeclr_logs}
-	
-	[[ ( ${gpeclr_dest} ) && ( -z "${gpeclr_repo}" ) ]] && set_repo
-	[[ ( ${gpeclr_repo} || ${gpeclr_branch} || ${gpeclr_logs} ) && ( -z "${gpeclr_dest}" ) ]] && usage  
+	if $(ls -a1 ${gpeclr_dest} 2>/dev/null | grep -P -i -q '^\.git$' ); then
+		pull ${gpeclr_dest} ${gpeclr_repo}  
+	else
+		clone ${gpeclr_repo} ${gpeclr_dest} ${gpeclr_branch}
+	fi
+
+	return 0
 }
 
+# Utilized in order to allow the script to run using a config file when called with the -C option.
 config() {
-	# Set the repo and the branch.
-	set_repo
+	cnf_chk
+
+	# Set contacts.
+	gpeclr_cont="$(awk -F ": " '/^contact:./ {print $2}' ${CONFIG})"
+	
+	# Set and initalize he logs.
+	local _logs="$(awk -F ": " '/^logs:./ {print $2}' ${CONFIG})"
+	set_logs ${_logs}
+	${log_on} || log_init "${gpeclr_logs}"
+	
 	# Set the destination.
 	local _dest="$(awk -F ": " '/^destination:./ {print $2}' ${CONFIG})"
 	set_dest ${_dest}
-	# Set the logs.
-	gpeclr_logs="$(awk -F ": " '/^logs:i./ {print $2}' ${CONFIG})"
+	
+	# Set the repo.
+	set_repo
+
+	# Set the branch
+	set_branch
 }
 
 # Checks to ensure that the provided destination directory exist, if it does the variable gpeclr_dest is set.
 # @private
 # @args:<string> - Destination directory
 set_dest() {
-	[ -d ${1%/*} ] || throw "InvalidArgument" "The provided directory does not exist: ${1}"
+	if [ ! -d ${1%/*} ]; then	
+		incite "InvalidArgument" "The provided destination directory does not exist: ${1}"
+		if ${gpeclr_cnfg}; then
+			log_error excp_stack[@]
+			gpeclr_mail
+		else
+			throw
+		fi
+	fi
 
 	gpeclr_dest=${1}
 }
@@ -86,8 +126,11 @@ set_dest() {
 # @args:<string> - The desired directory of the logs.
 # @args:<boolean> - Indicates whether or not the '-l' option was called.
 set_logs() {
+	local _log=''
 	local _dir=${1}
 	local _fix=true
+	local _filename=$(whoami)_$(date +'%Y%m%d%H%M%S')_gpreclr.log
+
 	[ "${2}" ] && _fix=${2}
 
 	if ! ${_fix}; then
@@ -102,11 +145,24 @@ set_logs() {
 		_dir="${_dir}/logs"
 	fi
 
-	[ -d ${_dir} ] || throw "InvalidArgument" "The parent directory of the log directory does not exist: ${_dir}"
+	[ -d ${_dir} ] || { 
+		incite "InvalidArgument" "The log directory, provided or otherwise does not exist: ${_dir}"
+		if ${gpeclr_cnfg}; then
+			gpeclr_mail
+		else
+			throw
+		fi
+	}
 
-	gpeclr_logs=${_dir}
+	_log="${_dir}/${_filename}"
+
+	if $( ls -1 ${_dir} | grep -P -i -q "^$(whoami)_\d{14}_gpreclr\.log$" ); then
+		local _pre=$( ls -1 ${_dir} | grep -P -i "^$(whoami)_\d{14}_gpreclr\.log$" ) 
+		mv "${_dir}/${_pre}" "${_log}"
+	fi
+
+	gpeclr_logs=${_log}
 }
-
 
 # Ensures that the remote repo provided is reachable. If it is reachable the address will be pushed unto the ARGLST array
 # @private
@@ -118,19 +174,63 @@ set_repo() {
 	local _branch=''
 
 	if [ ${#@} -eq 0 ]; then
-		[[ ( -s ${CONFIG} ) && ( -r ${CONFIG} ) ]] || { incite "FatalError" "GPECLR's corresponding config file is missing: ${CONFIG}"; throw; }
+		cnf_chk	
+		
 		_url="$(awk -F ": " '/^repository:./ {print $2}' ${CONFIG})"
-		if ${gpeclr_config}; then
-			_branch="$(awk -F ": " '/^branch:./ {print $2}' ${CONFIG})"
-			[ ${_branch} == ${gpeclr_branch} ] || gpeclr_branch=${_branch}
-		fi
+		
 	else
 		_url=${1}
-	fi	
-
-	git ls-remote --exit-code "${_url}" "${gpeclr_branch}" --quiet &> /dev/null || throw "InvalidArgument" "The provided URL for the repo or the branch is invalid: ${1} ${gpeclr_branch}"
+	fi
+		
+	repo_chk "${_url}" "${gpeclr_branch}" || { 
+		incite "InvalidArgument" "The provided URL for the repo is invalid: ${_url}"
+		if ${gpeclr_cnfg}; then
+			log_error excp_stack[@]
+			gpeclr_mail
+		else
+			throw
+		fi	
+	}
 
 	gpeclr_repo=${_url}
+}
+
+# Sets the variable gpeclr_branch
+# @private
+# @args:<boolean> - indicates whether or not to use the default branch as defined on the config file.
+set_branch() {
+	if [ ${#@} -eq 0 ]; then 	
+		local _branch="$(awk -F ": " '/^branch:./ {print $2}' ${CONFIG})"
+		[[ ${_branch} == ${gpeclr_branch} ]] || gpeclr_branch=${_branch}
+	else 	
+		[ ${gpeclr_repo} ] || {
+			incite "InvalidArgument" "The branch (-b) option cannot be called without a corresponding repo"
+			usage
+			throw
+		}
+		gpeclr_branch=${1}
+	fi
+		
+	repo_chk "${gpeclr_repo}" "${gpeclr_branch}" || { 
+		incite "InvalidArgument" "The provided branch for the repo is invalid: ${gpeclr_branch}"
+		if ${gpeclr_cnfg}; then 
+			log_error excp_stack[@]
+			gpeclr_mail
+		else
+			throw
+		fi
+	}
+}
+
+# Sends mail to the designated contact if gpeclr is run in config mode.
+gpeclr_mail() {
+	if [ ${FUNCNAME[1]} == 'set_logs' ]; then
+		echo "$(throw 2>&1)" | mail -s "${GPECL_MAIL_SUB}" "${gpeclr_cont}"	
+	else
+		mailx -s "${GPECL_MAIL_SUB}" "${gpeclr_cont}" < ${gpeclr_logs}
+	fi
+
+	exit ${excp_code}
 }
 
 # Outputs usage information for gpeclr
@@ -148,6 +248,7 @@ usage() {
 		"head;OPTIONS:"
 		"body;
 		-r <REPOSITORY>: the https address of the repository to be cloned or pulled.;
+		-b <BRANCH>: The branch of the corresponding repository to be cloned or pulled (defaults to 'master').;
 		-d <DESTINATION>: the destination directory as it corresponds with the parent directory '/data/hpcc/bocaprod/master';
 		-l <LOG_DIR>: the directory were the logs will be written to.;
 		-C : Will execute gpeclr utilizing the config file '../config/gpeclr.cnf';
@@ -163,8 +264,10 @@ usage() {
 	)
 
 	form _usage[@]
-
-	[[ ${1} ]] && exit 1
+	
+	[ ${1} ] && exit 1
+	
+	return 0
 }
 
 
@@ -172,8 +275,15 @@ usage() {
 # @param <string> The URL of the repository to be cloned.
 # @param <string> The absolute path of the destination directory.
 clone() {
-	local _err="$(git clone ${1} -b master ${2} 2>&1 > /dev/null --quiet)"
-	[[ ${_err} ]] && throw "FatalError" "Git failed to clone the repo ${1} to ${2} with the following error: ${_err}"
+	local _err="$(git clone ${1} -b ${3} ${2} 2>&1 > /dev/null --quiet)"
+	[[ ${_err} ]] && {
+		incite "FatalError" "Git failed to clone the repo ${1} to ${2} with the following error: ${_err}"
+		if ${gpeclr_cnfg}; then 
+			log_error excp_stack[@]
+		else
+			throw
+		fi
+	}
 }
 
 # Updates the corresponding local repo to the current state of the remote repo.
@@ -183,7 +293,14 @@ pull() {
 	local _dir
 	[[ ${1:$((${#1}-1))} == "/" ]] && _dir=${1}'.git' || _dir=${1}'/.git'
 	local _err="$(git --git-dir=${_dir} --work-tree=${1} fetch --all --quiet && git --git-dir=${_dir} --work-tree=${1} reset --hard origin/master --quiet 2>&1 > /dev/null)"
-	[[ ${_err} ]] && throw "FatalError" "Git failed to update the repo ${1} with the following error: ${_err}"
+	[[ ${_err} ]] && { 
+		incite "FatalError" "Git failed to update the repo ${1} with the following error: ${_err}"
+		if ${gpeclr_cnfg}; then 
+			log_error excp_stack[@]
+		else
+			throw
+		fi
+	}
 }
 
 # Check to ensure that a string follows each of the corresponding argument.
@@ -197,6 +314,7 @@ opt_chk() {
 		d) _opt="<DESTINATION>";;
 		r) _opt="<REPOSITORY>";;
 		l) _opt="<LOG_DIR>";;
+		b) _opt="<BRANCH>"
 	esac
 
 	incite "InvalidArgument" "Option -${1} requires  ${_opt}"
@@ -204,21 +322,24 @@ opt_chk() {
 	throw
 }
 
-#set_repo https://gitlab.ins.risk.regn.net/RoseGr01/gpeclr.git
-#echo ${gpeclr_repo}
-#set_repo
-#set_dest '/data/data_build_1/calbus/ecl/master'
-#echo $gpeclr_dest
-#set_logs '/data/data_build_1/calbus/ecl/master' false
-#echo $gpeclr_logs
-#set_logs '/data/data_build_1/calbus/logs'
-#echo $gpeclr_logs
-#set_logs '/home/rosegr01/dev/tmp/master' false
-#echo $gpeclr_logs
+# Check to ensure that the URL or branch provided for the repo is valid.
+# @private
+# @args:<string> - The URL of the desired repo
+# @args:<string> - The branch of the desired repo
+repo_chk() {
+	local _url=${1}
+	local _branch=${2}
 
-#x=$( { gpeclr -r; } 2>&1)
-#echo "${x}"
-#x=$( { gpeclr -d; } 2>&1)
-#echo "${x}"
-#x=$( { gpeclr -l; } 2>&1 )
-#echo "${x}"
+	git ls-remote --exit-code "${_url}" "${gpeclr_branch}" --quiet &> /dev/null && return 0
+
+	return 1	
+}
+
+# Check to ensure that the config file is in place.
+cnf_chk() {
+	[[ ( -s ${CONFIG} ) && ( -r ${CONFIG} ) ]] || throw "FatalError" "GPECLR's corresponding config file is missing: ${CONFIG}"
+
+	return 0
+}
+
+gpeclr "$@"

@@ -29,20 +29,17 @@ log_init(){
 	if [ ${#@} -eq 0 ]; then
 		log_error=${ERROR}
 		log_event=${EVENT}
-	fi	
-
-	if [ "${1}" ]; then
-		log_make ${1} && log_error=${1}
-	fi
-
-	if [ "${2}" ]; then 
-		log_make ${2} && log_event=${2} 
 	fi
 	
-	[[ ( ${log_error} ) && ( -f ${log_error} ) ]] || touch ${log_error}
-	[[ ( ${log_event} ) && ( -f ${log_event} ) ]] || touch ${log_event}
-	[ -s ${log_error} ] && truncate -s 0 ${log_error} 
-	[ -s ${log_event} ] && truncate -s 0 ${log_event} 
+	[ ${1} ] && { log_make ${1} && log_error=${1}; }
+	
+	[ ${2} ] && { log_make ${2} && log_event=${2}; }
+
+	[[ ${log_error} && ! -f ${log_error} ]] && touch ${log_error}
+	[[ ${log_event} && ! -f ${log_event} ]] && touch ${log_event}
+	
+	[[ ${log_error} && -s ${log_error} ]] && truncate -s 0 ${log_error}
+	[[ ${log_error} && -s ${log_event} ]] && truncate -s 0 ${log_event}
 
 	return 0
 }
@@ -68,9 +65,9 @@ log_make(){
 # Writes the provided error, and corresponding stack trace to the error log.
 # @arg:<string> - Pipe delimited string containing the exception and the corresponding stack trace.
 log_error(){
-	log_chk_arg "$@"
-	declare -a _s
-	IFS='|' read -r -a _s <<< ${1}
+	log_chk_arg ${@}
+	declare -a _s=("${!1}")
+	#IFS='|' read -r -a _s <<< ${1}
 	local _p=`log_fore`
 
 	printf "${_p} %15s\n" "${_s[0]%\|*}" >> ${log_error}
@@ -79,14 +76,12 @@ log_error(){
 	for s in "${_s[@]}"; do
 		printf "%10s%s\n" "" "${s%\|*}" >> ${log_error}
 	done
-
-	return 0
 }
 
 # Write the provided message to the event log.
 # @arg:<string> - The message to be written to the event log.
 log_event(){
-	log_chk_arg "$@"
+	log_chk_arg ${@}
 
 	local _m=${1}
 	local _p=`log_fore`
@@ -101,7 +96,6 @@ log_event(){
 # @args:<array> - All args provided to the caller.
 log_chk_arg(){
 	log_private
-
 	[[ ( ${#@} -gt 1 ) || ( ${#@} -lt 1 ) ]] && throw "InvalidArgument" "Invalid number of arguments provided"
 }
 
